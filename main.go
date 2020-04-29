@@ -4,7 +4,7 @@ import (
 	"context"
 	"errors"
 	"flag"
-	"fmt"
+	"log"
 	"net"
 	"os"
 	"sort"
@@ -14,7 +14,6 @@ import (
 
 	"github.com/jackc/pgx/v4"
 
-	"github.com/fatih/color"
 	uuid "github.com/nu7hatch/gouuid"
 
 	"github.com/google/gopacket"
@@ -27,7 +26,6 @@ var debug bool
 var seconds int64
 var vendorFile string
 
-var history = []Network{}
 var current = Network{}
 var vendors = []VendorRecord{}
 
@@ -43,8 +41,7 @@ func init() {
 	var err error
 	conn, err = pgx.Connect(context.Background(), os.Getenv("DB"))
 	if err != nil {
-		color.Red("could not connect to database: %v", err)
-		os.Exit(1)
+		log.Fatalf("could not connect to database: %v", err)
 	}
 }
 
@@ -52,18 +49,16 @@ func main() {
 	var err error
 	vendors, err = readVendors(vendorFile)
 	if err != nil {
-		color.Red("error while reading vendor file %s", vendorFile)
-		os.Exit(1)
+		log.Fatalf("error while reading vendor file %s", vendorFile)
 	}
 
 	iface, err := net.InterfaceByName(ifaceName)
 	if err != nil {
-		color.Red("can not get interface %s, %s", ifaceName, err)
-		os.Exit(1)
+		log.Fatalf("can not get interface %s, %s", ifaceName, err)
 	}
 
 	if err := scan(iface); err != nil {
-		color.Yellow("interface %v: %v", ifaceName, err)
+		log.Printf("interface %v: %v", ifaceName, err)
 	}
 }
 
@@ -98,9 +93,9 @@ func scan(iface *net.Interface) error {
 		return errors.New("mask means network is too large")
 	}
 	if debug {
-		color.Green("Using network range %v for interface %v", addr, iface.Name)
-
+		log.Printf("Using network range %v for interface %v", addr, iface.Name)
 	}
+
 	// Open up a pcap handle for packet reads/writes.
 	handle, err := pcap.OpenLive(iface.Name, 65536, true, pcap.BlockForever)
 	if err != nil {
@@ -120,22 +115,13 @@ func scan(iface *net.Interface) error {
 
 		// Write our scan packets out to the handle.
 		if err := writeARP(handle, iface, addr); err != nil {
-			color.Yellow("error writing packets on %v: %v", iface.Name, err)
+			log.Printf("error writing packets on %v: %v", iface.Name, err)
 			return err
 		}
 
 		time.Sleep(time.Duration(seconds) * time.Second)
 
 		current = deduplicateNetwork(current)
-		history = append(history, current)
-
-		last := history[len(history)-1]
-		fmt.Println("Network at ", last.Time, "of", len(history))
-		for _, addr := range last.Addresses {
-			fmt.Printf("%s => %s (%s)\n", addr.IP, addr.MAC, addr.Vendor)
-		}
-		fmt.Println()
-
 		for _, addr := range current.Addresses {
 			uuid, err := uuid.NewV4()
 			if err != nil {
